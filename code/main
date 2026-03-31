@@ -1,0 +1,192 @@
+import cv2
+import numpy as np
+
+img = cv2.imread("pupila_1.jpg")
+
+if img is None:
+    print("Error cargando imagen")
+    exit()
+    
+################
+ 
+img = cv2.resize(img, None, fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+
+######################
+
+
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+# ==============================
+# PREPROCESAMIENTO
+# ==============================
+
+gray = cv2.GaussianBlur(gray, (9,9), 0)
+edges = cv2.Canny(gray, 30, 80)
+
+# ==============================
+# DETECCIÓN DE PUPILA
+# ==============================
+
+circles = cv2.HoughCircles(
+    gray,
+    cv2.HOUGH_GRADIENT,
+    dp=1.2,
+    minDist=100,
+    param1=50,
+    param2=25,
+    minRadius=20,
+    maxRadius=80
+)
+
+pupila = None
+
+if circles is not None:
+    circles = np.uint16(np.around(circles))
+
+    h, w = gray.shape
+    image_center = (w//2, h//2)
+
+    best_score = 999999
+
+    for i in circles[0, :]:
+        center = (i[0], i[1])
+        radius = i[2]
+
+        distance = np.sqrt(
+            (int(center[0]) - image_center[0])**2 +
+            (int(center[1]) - image_center[1])**2
+        )
+
+        if distance < best_score:
+            best_score = distance
+            pupila = {
+                "centro": (int(center[0]), int(center[1])),
+                "radio": int(radius)
+            }
+
+# ==============================
+# INICIALIZAR VARIABLES (CLAVE)
+# ==============================
+
+D = None
+cx, cy, r = 0, 0, 0
+
+# ==============================
+# PROCESAMIENTO SI HAY PUPILA
+# ==============================
+
+if pupila is not None:
+
+    cx, cy = pupila["centro"]
+    r = pupila["radio"]
+
+    # Dibujar pupila
+    cv2.circle(img, (cx, cy), r, (0,255,0), 2)
+    cv2.circle(img, (cx, cy), 3, (0,0,255), -1)
+
+    # Máscara pupila
+    mask = np.zeros(gray.shape, dtype=np.uint8)
+    cv2.circle(mask, (cx, cy), r, 255, -1)
+
+    pupil_region = cv2.bitwise_and(gray, gray, mask=mask)
+
+    # Reflejo
+    _, _, _, maxLoc = cv2.minMaxLoc(pupil_region)
+    reflejo = maxLoc
+
+    cv2.circle(img, reflejo, 4, (255,0,0), -1)
+
+    # Desplazamiento
+    dx = int(reflejo[0]) - int(cx)
+    dy = int(reflejo[1]) - int(cy)
+    desplazamiento = np.sqrt(dx**2 + dy**2)
+
+    # Modelo
+    a = 0.05
+    b = 0
+    D = a * desplazamiento + b
+
+    # Clasificación
+    def clasificar_error(D):
+        if D < -0.50:
+            return "Miopía"
+        elif D > 0.50:
+            return "Hipermetropía"
+        else:
+            return "Emetropía"
+
+    tipo = clasificar_error(D)
+
+    print("Pupila detectada:", pupila)
+    print("Desplazamiento:", desplazamiento)
+    print("Dioptrías:", round(D,2))
+    print("Diagnóstico:", tipo)
+
+else:
+    print("No se detectó pupila")
+
+# ==============================
+# PANEL VISUAL
+# ==============================
+
+edges_color = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+images_combined = np.hstack((img, edges_color))
+
+panel_width = 420
+panel_height = images_combined.shape[0]
+panel = np.zeros((panel_height, panel_width, 3), dtype=np.uint8)
+
+verde = (0,255,0)
+
+# ==============================
+# TITULO
+# ==============================
+
+cv2.putText(
+    panel,
+    "ANALISIS REFRACTIVO",
+    (20, 50),
+    cv2.FONT_HERSHEY_DUPLEX,
+    0.9,
+    verde,
+    2,
+    cv2.LINE_AA
+)
+
+cv2.line(panel, (20, 70), (panel_width-20, 70), verde, 1)
+
+# ==============================
+# TEXTOS DINÁMICOS
+# ==============================
+
+if pupila is not None and D is not None:
+    texto_d = f"Dioptrias: {D:.2f} D"
+    texto_centro = f"Centro: ({cx}, {cy})"
+    texto_radio = f"Radio: {r} px"
+else:
+    texto_d = "Dioptrias: N/A"
+    texto_centro = "Centro: N/A"
+    texto_radio = "Radio: N/A"
+
+# ==============================
+# MOSTRAR DATOS
+# ==============================
+
+cv2.putText(panel, texto_d, (20, 140),
+            cv2.FONT_HERSHEY_TRIPLEX, 1.2, verde, 3, cv2.LINE_AA)
+
+cv2.putText(panel, texto_centro, (20, 220),
+            cv2.FONT_HERSHEY_DUPLEX, 1.0, verde, 2, cv2.LINE_AA)
+
+cv2.putText(panel, texto_radio, (20, 280),
+            cv2.FONT_HERSHEY_DUPLEX, 1.0, verde, 2, cv2.LINE_AA)
+
+# ==============================
+# DISPLAY FINAL
+# ==============================
+
+final_display = np.hstack((panel, images_combined))
+
+cv2.imshow("Analisis Pupilar Completo", final_display)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
